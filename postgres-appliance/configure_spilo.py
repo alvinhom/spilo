@@ -21,10 +21,11 @@ PROVIDER_GOOGLE = "google"
 PROVIDER_LOCAL = "local"
 PROVIDER_UNSUPPORTED = "unsupported"
 USE_KUBERNETES = os.environ.get('KUBERNETES_SERVICE_HOST') is not None
+MEMORY_LIMIT_IN_BYTES_PATH = '/sys/fs/cgroup/memory/memory.limit_in_bytes'
 
 
 def parse_args():
-    sections = ['all', 'patroni', 'patronictl', 'certificate', 'wal-e', 'crontab', 'ldap']
+    sections = ['all', 'patroni', 'patronictl', 'certificate', 'wal-e', 'crontab', 'ldap', 'pam-oauth2', 'pgbouncer']
     argp = argparse.ArgumentParser(description='Configures Spilo',
                                    epilog="Choose from the following sections:\n\t{}".format('\n\t'.join(sections)),
                                    formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -134,25 +135,15 @@ bootstrap:
         log_disconnections: 'on'
         log_statement: 'ddl'
         log_temp_files: 0
-        shared_preload_libraries: pg_stat_statements
         track_functions: all
         checkpoint_completion_target: 0.9
         autovacuum_max_workers: 5
         autovacuum_vacuum_scale_factor: 0.05
         autovacuum_analyze_scale_factor: 0.02
-      {{#USE_WALE}}
-      recovery_conf:
-        restore_command: envdir "{{WALE_ENV_DIR}}" wal-e --aws-instance-profile wal-fetch "%f" "%p"
-      {{/USE_WALE}}
   initdb:
   - encoding: UTF8
   - locale: en_US.UTF-8
-  users:
-    admin:
-      password: {{PGPASSWORD_ADMIN}}
-      options:
-        - createrole
-        - createdb
+  - data-checksums
   pg_hba:
     - hostssl all all 0.0.0.0/0 md5
     - host    all all 0.0.0.0/0 md5
@@ -161,6 +152,7 @@ restapi:
   listen: 0.0.0.0:{{APIPORT}}
   connect_address: {{instance_data.ip}}:{{APIPORT}}
 postgresql:
+  use_unix_socket: true
   name: '{{instance_data.id}}'
   scope: *scope
   listen: 0.0.0.0:{{PGPORT}}
@@ -168,36 +160,39 @@ postgresql:
   data_dir: {{PGDATA}}
   parameters:
     shared_buffers: {{postgresql.parameters.shared_buffers}}
-    logging_collector: on
+    logging_collector: 'on'
     log_destination: csvlog
     log_directory: ../pg_log
-    log_filename: postgresql-%u.log
-    log_file_mode: 0644
-    log_rotation_age: 1d
-    log_truncate_on_rotation: on
+    log_filename: 'postgresql-%u.log'
+    log_file_mode: '0644'
+    log_rotation_age: '1d'
+    log_truncate_on_rotation: 'on'
     ssl: 'on'
     ssl_cert_file: {{SSL_CERTIFICATE_FILE}}
     ssl_key_file: {{SSL_PRIVATE_KEY_FILE}}
+    shared_preload_libraries: 'bg_mon,pg_stat_statements'
+    bg_mon.listen_address: '0.0.0.0'
+  {{#USE_WALE}}
+  recovery_conf:
+    restore_command: envdir "{{WALE_ENV_DIR}}" /wale_restore_command.sh "%f" "%p"
+  {{/USE_WALE}}
   authentication:
     superuser:
-      username: postgres
-      password: {{PGPASSWORD_SUPERUSER}}
+      username: {{PGUSER_SUPERUSER}}
+      password: '{{PGPASSWORD_SUPERUSER}}'
     replication:
-      username: standby
-      password: {{PGPASSWORD_STANDBY}}
+      username: {{PGUSER_STANDBY}}
+      password: '{{PGPASSWORD_STANDBY}}'
  {{#CALLBACK_SCRIPT}}
   callbacks:
     on_start: {{CALLBACK_SCRIPT}}
     on_stop: {{CALLBACK_SCRIPT}}
-    on_restart: {{CALLBACK_SCRIPT}}
     on_role_change: {{CALLBACK_SCRIPT}}
  {{/CALLBACK_SCRIPT}}
+{{#USE_WALE}}
   create_replica_method:
-    {{#USE_WALE}}
     - wal_e
-    {{/USE_WALE}}
-    - basebackup
- {{#USE_WALE}}
+    - basebackup_fast_xlog
   wal_e:
     command: patroni_wale_restore
     envdir: {{WALE_ENV_DIR}}
@@ -206,6 +201,9 @@ postgresql:
     use_iam: 1
     retries: 2
     no_master: 1
+  basebackup_fast_xlog:
+    command: /basebackup.sh
+    retries: 2
 {{/USE_WALE}}
 '''
 
@@ -263,12 +261,14 @@ def get_placeholders(provider):
     placeholders.setdefault('PGHOME', os.path.expanduser('~'))
     placeholders.setdefault('APIPORT', '8008')
     placeholders.setdefault('BACKUP_SCHEDULE', '00 01 * * *')
+    placeholders.setdefault('BACKUP_NUM_TO_RETAIN', 2)
     placeholders.setdefault('CRONTAB', '[]')
     placeholders.setdefault('PGROOT', os.path.join(placeholders['PGHOME'], 'pgroot'))
     placeholders.setdefault('WALE_TMPDIR', os.path.abspath(os.path.join(placeholders['PGROOT'], '../tmp')))
     placeholders.setdefault('PGDATA', os.path.join(placeholders['PGROOT'], 'pgdata'))
-    placeholders.setdefault('PGPASSWORD_ADMIN', 'standby')
+    placeholders.setdefault('PGUSER_STANDBY', 'standby')
     placeholders.setdefault('PGPASSWORD_STANDBY', 'standby')
+    placeholders.setdefault('PGUSER_SUPERUSER', 'postgres')
     placeholders.setdefault('PGPASSWORD_SUPERUSER', 'zalando')
     placeholders.setdefault('PGPORT', '5432')
     placeholders.setdefault('SCOPE', 'dummy')
@@ -280,15 +280,17 @@ def get_placeholders(provider):
     placeholders.setdefault('USE_WALE', False)
     placeholders.setdefault('CALLBACK_SCRIPT', '')
 
-    if provider in (PROVIDER_AWS, PROVIDER_GOOGLE):
-        if provider == PROVIDER_AWS:
-            if 'WAL_S3_BUCKET' in placeholders:
-                placeholders['USE_WALE'] = True
-            if not USE_KUBERNETES:  # AWS specific callback to tag the instances with roles
-                placeholders['CALLBACK_SCRIPT'] = 'patroni_aws'
-        elif provider == PROVIDER_GOOGLE and 'WAL_GCS_BUCKET' in placeholders:
+    if provider == PROVIDER_AWS:
+        if 'WAL_S3_BUCKET' in placeholders:
             placeholders['USE_WALE'] = True
-            placeholders.setdefault('GOOGLE_APPLICATION_CREDENTIALS', '')
+        if not USE_KUBERNETES:  # AWS specific callback to tag the instances with roles
+            if placeholders.get('EIP_ALLOCATION'):
+                placeholders['CALLBACK_SCRIPT'] = 'python3 /callback_aws.py {0}'.format(placeholders['EIP_ALLOCATION'])
+            else:
+                placeholders['CALLBACK_SCRIPT'] = 'patroni_aws'
+    elif provider == PROVIDER_GOOGLE and 'WAL_GCS_BUCKET' in placeholders:
+        placeholders['USE_WALE'] = True
+        placeholders.setdefault('GOOGLE_APPLICATION_CREDENTIALS', '')
 
     # Kubernetes requires a callback to change the labels in order to point to the new master
     if USE_KUBERNETES:
@@ -300,7 +302,12 @@ def get_placeholders(provider):
         'envdir "{0}" wal-e --aws-instance-profile wal-push "%p"'.format(placeholders['WALE_ENV_DIR']) \
         if placeholders['USE_WALE'] else '/bin/true'
 
-    os_memory_mb = os.sysconf('SC_PAGE_SIZE') * os.sysconf('SC_PHYS_PAGES') / 1024 / 1024
+    if os.path.exists(MEMORY_LIMIT_IN_BYTES_PATH):
+        with open(MEMORY_LIMIT_IN_BYTES_PATH) as f:
+            os_memory_mb = int(f.read()) / 1048576
+    else:
+        os_memory_mb = sys.maxsize
+    os_memory_mb = min(os_memory_mb, os.sysconf('SC_PAGE_SIZE') * os.sysconf('SC_PHYS_PAGES') / 1048576)
 
     # # We take 1/4 of the memory, expressed in full MB's
     placeholders['postgresql']['parameters']['shared_buffers'] = '{}MB'.format(int(os_memory_mb/4))
@@ -325,33 +332,17 @@ def pystache_render(*args, **kwargs):
 
 
 def get_dcs_config(config, placeholders):
-    defaults = \
-        yaml.load('''\
-zookeeper:
-  scope: '{scope}'
-  session_timeout: {bootstrap[dcs][ttl]}
-  reconnect_timeout: {bootstrap[dcs][loop_wait]}
-etcd:
-  scope: '{scope}'
-  ttl: {bootstrap[dcs][ttl]}'''.format(**config))
-
-    config = {}
-
     if 'ZOOKEEPER_HOSTS' in placeholders:
-        config = {'zookeeper': defaults['zookeeper']}
-        config['zookeeper']['hosts'] = yaml.load(placeholders['ZOOKEEPER_HOSTS'])
+        config = {'zookeeper': {'hosts': yaml.load(placeholders['ZOOKEEPER_HOSTS'])}}
     elif 'EXHIBITOR_HOSTS' in placeholders and 'EXHIBITOR_PORT' in placeholders:
-        config = {'zookeeper': defaults['zookeeper']}
-        config['zookeeper']['exhibitor'] = {'poll_interval': '300', 'port': placeholders['EXHIBITOR_PORT'],
-                                            'hosts': yaml.load(placeholders['EXHIBITOR_HOSTS'])}
+        config = {'exhibitor': {'hosts': yaml.load(placeholders['EXHIBITOR_HOSTS']),
+                                'port': placeholders['EXHIBITOR_PORT']}}
     elif 'ETCD_HOST' in placeholders:
-        config = {'etcd': defaults['etcd']}
-        config['etcd']['host'] = placeholders['ETCD_HOST']
+        config = {'etcd': {'host': placeholders['ETCD_HOST']}}
     elif 'ETCD_DISCOVERY_DOMAIN' in placeholders:
-        config = {'etcd': defaults['etcd']}
-        config['etcd']['discovery_srv'] = placeholders['ETCD_DISCOVERY_DOMAIN']
+        config = {'etcd': {'discovery_srv': placeholders['ETCD_DISCOVERY_DOMAIN']}}
     else:
-        pass  # Configuration can also be specified using either SPILO_CONFIGURATION or PATRONI_CONFIGURATION
+        config = {}  # Configuration can also be specified using either SPILO_CONFIGURATION or PATRONI_CONFIGURATION
 
     return config
 
@@ -383,6 +374,8 @@ def write_wale_command_environment(placeholders, overwrite, provider):
         return
     if not os.path.exists(placeholders['WALE_TMPDIR']):
         os.makedirs(placeholders['WALE_TMPDIR'])
+        os.chmod(placeholders['WALE_TMPDIR'], 0o1777)
+
     write_file(placeholders['WALE_TMPDIR'], os.path.join(placeholders['WALE_ENV_DIR'], 'TMPDIR'), True)
 
 
@@ -396,7 +389,7 @@ def write_crontab(placeholders, path, overwrite):
                 return
 
     lines = ['PATH={}'.format(path)]
-    lines += ['{BACKUP_SCHEDULE} /postgres_backup.sh "{WALE_ENV_DIR}" "{PGDATA}"'.format(**placeholders)]
+    lines += ['{BACKUP_SCHEDULE} /postgres_backup.sh "{WALE_ENV_DIR}" "{PGDATA}" "{BACKUP_NUM_TO_RETAIN}"'.format(**placeholders)]
     lines += yaml.load(placeholders['CRONTAB'])
     lines += ['']  # EOF requires empty line for cron
 
@@ -424,14 +417,11 @@ redirect_stderr=true
 def write_ldap_configuration(placeholders, overwrite):
     ldap_url = placeholders.get('LDAP_URL')
     if ldap_url is None:
-        logging.info("No LDAP_URL was specified, skipping LDAP configuration")
-        return
+        return logging.info("No LDAP_URL was specified, skipping LDAP configuration")
 
     r = urlparse(ldap_url)
     if not r.scheme:
-        logging.error('LDAP_URL should contain a scheme')
-        logging.info(r)
-        return
+        return logging.error('LDAP_URL should contain a scheme: %s', r)
 
     host, port = r.hostname, r.port
     if not port:
@@ -445,8 +435,8 @@ options = NO_SSLv2
 connect = {0}:{1}
 client = yes
 accept = 389
-verify = 3
-CAfile = /etc/stunnel/chain.pem
+verify = 2
+CApath = /etc/ssl/certs
 """.format(host, port)
     write_file(stunnel_config, '/etc/stunnel/ldap.conf', overwrite)
 
@@ -461,6 +451,47 @@ stdout_logfile_maxbytes=0
 redirect_stderr=true
 """
     write_file(supervisord_config, '/etc/supervisor/conf.d/ldaptunnel.conf', overwrite)
+
+
+def write_pam_oauth2_configuration(placeholders, overwrite):
+    pam_oauth2_args = placeholders.get('PAM_OAUTH2') or ''
+    t = pam_oauth2_args.split()
+    if len(t) < 2:
+        return logging.info("No PAM_OAUTH2 configuration was specified, skipping")
+
+    r = urlparse(t[0])
+    if not r.scheme or r.scheme != 'https':
+        return logging.error('First argument of PAM_OAUTH2 must be a valid https url: %s', r)
+
+    pam_oauth2_config = 'auth sufficient pam_oauth2.so {0}\n'.format(pam_oauth2_args)
+    pam_oauth2_config += 'account sufficient pam_oauth2.so\n'
+
+    write_file(pam_oauth2_config, '/etc/pam.d/postgresql', overwrite)
+
+
+def write_pgbouncer_configuration(placeholders, overwrite):
+    pgbouncer_config = placeholders.get('PGBOUNCER_CONFIGURATION')
+    if not pgbouncer_config:
+        return logging.info('No PGBOUNCER_CONFIGURATION was specified, skipping')
+
+    write_file(pgbouncer_config, '/etc/pgbouncer/pgbouncer.ini', overwrite)
+
+    pgbouncer_auth = placeholders.get('PGBOUNCER_AUTHENTICATION') or placeholders.get('PGBOUNCER_AUTH')
+    if pgbouncer_auth:
+        write_file(pgbouncer_auth, '/etc/pgbouncer/userlist.txt', overwrite)
+
+    supervisord_config = """\
+[program:pgbouncer]
+user=postgres
+autostart=1
+priority=500
+directory=/
+command=env -i /usr/sbin/pgbouncer /etc/pgbouncer/pgbouncer.ini
+stdout_logfile=/dev/stdout
+stdout_logfile_maxbytes=0
+redirect_stderr=true
+"""
+    write_file(supervisord_config, '/etc/supervisor/conf.d/pgbouncer.conf', overwrite)
 
 
 def main():
@@ -485,7 +516,7 @@ def main():
     user_config = yaml.load(os.environ.get('SPILO_CONFIGURATION', os.environ.get('PATRONI_CONFIGURATION', ''))) or {}
     if not isinstance(user_config, dict):
         config_var_name = 'SPILO_CONFIGURATION' if 'SPILO_CONFIGURATION' in os.environ else 'PATRONI_CONFIGURATION'
-        raise ValueError('{0} should contain a dict, yet it is a {}'.format(config_var_name, type(user_config)))
+        raise ValueError('{0} should contain a dict, yet it is a {1}'.format(config_var_name, type(user_config)))
 
     config = deep_update(user_config, config)
 
@@ -515,6 +546,10 @@ def main():
                 write_crontab(placeholders, os.environ.get('PATH'), args['force'])
         elif section == 'ldap':
             write_ldap_configuration(placeholders, args['force'])
+        elif section == 'pam-oauth2':
+            write_pam_oauth2_configuration(placeholders, args['force'])
+        elif section == 'pgbouncer':
+            write_pgbouncer_configuration(placeholders, args['force'])
         else:
             raise Exception('Unknown section: {}'.format(section))
 
