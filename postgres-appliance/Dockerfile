@@ -136,7 +136,12 @@ RUN export DEBIAN_FRONTEND=noninteractive \
 
     && pip3 install setuptools pip --upgrade \
     && pip3 install --upgrade patroni==$PATRONIVERSION \
-            gcloud boto wal-e==$WALE_VERSION \
+            gcloud boto \ 
+
+    # wal-e workaround to get latest source code to support backup to file
+    && apt-get install -y git \
+    && git clone https://github.com/wal-e/wal-e.git /home/wale \
+    && python3 -m pip install /home/wale \
 
     # https://github.com/wal-e/wal-e/issues/318
     && sed -i 's/^\(    for i in range(0,\) num_retries):.*/\1 100):/g' /usr/local/lib/python3.5/dist-packages/boto/utils.py \

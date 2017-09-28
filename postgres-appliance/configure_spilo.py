@@ -291,6 +291,8 @@ def get_placeholders(provider):
     elif provider == PROVIDER_GOOGLE and 'WAL_GCS_BUCKET' in placeholders:
         placeholders['USE_WALE'] = True
         placeholders.setdefault('GOOGLE_APPLICATION_CREDENTIALS', '')
+    elif provider == PROVIDER_LOCAL and 'WAL_FILE_BACKUP_DIR' in placeholders:
+        placeholders['USE_WALE'] = True
 
     # Kubernetes requires a callback to change the labels in order to point to the new master
     if USE_KUBERNETES:
@@ -371,7 +373,9 @@ def write_wale_command_environment(placeholders, overwrite, provider):
             write_file('{GOOGLE_APPLICATION_CREDENTIALS}'.format(**placeholders),
                        os.path.join(placeholders['WALE_ENV_DIR'], 'GOOGLE_APPLICATION_CREDENTIALS'), overwrite)
     else:
-        return
+        write_file('file://{WAL_FILE_BACKUP_DIR}/spilo/{SCOPE}/wal/'.format(**placeholders),
+                   os.path.join(placeholders['WALE_ENV_DIR'], 'WALE_FILE_PREFIX'), overwrite)
+
     if not os.path.exists(placeholders['WALE_TMPDIR']):
         os.makedirs(placeholders['WALE_TMPDIR'])
         os.chmod(placeholders['WALE_TMPDIR'], 0o1777)
