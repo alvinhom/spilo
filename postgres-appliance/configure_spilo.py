@@ -341,6 +341,11 @@ def get_dcs_config(config, placeholders):
                                 'port': placeholders['EXHIBITOR_PORT']}}
     elif 'ETCD_HOST' in placeholders:
         config = {'etcd': {'host': placeholders['ETCD_HOST']}}
+    elif 'ETCD_URL' in placeholders:
+        config = {'etcd': {'url': placeholders['ETCD_URL'], 
+                           'cacert': placeholders['ETCD_CACERT'], 
+                           'cert': placeholders['ETCD_CERT'], 
+                           'key': placeholders['ETCD_KEY']}}
     elif 'ETCD_DISCOVERY_DOMAIN' in placeholders:
         config = {'etcd': {'discovery_srv': placeholders['ETCD_DISCOVERY_DOMAIN']}}
     else:
@@ -402,6 +407,9 @@ def write_crontab(placeholders, path, overwrite):
 
 
 def write_etcd_configuration(placeholders, overwrite=False):
+    if 'ETCD_HOST' in placeholders or  'ETCD_URL' in placeholders or 'ETCD_DISCOVERY_DOMAIN' in placeholders:
+       return
+
     placeholders.setdefault('ETCD_HOST', '127.0.0.1:2379')
 
     etcd_config = """\
