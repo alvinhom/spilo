@@ -342,10 +342,10 @@ def get_dcs_config(config, placeholders):
     elif 'ETCD_HOST' in placeholders:
         config = {'etcd': {'host': placeholders['ETCD_HOST']}}
     elif 'ETCD_URL' in placeholders:
-        config = {'etcd': {'url': placeholders['ETCD_URL'], 
-                           'cacert': placeholders['ETCD_CACERT'], 
-                           'cert': placeholders['ETCD_CERT'], 
-                           'key': placeholders['ETCD_KEY']}}
+        config = {'etcd': {'url': placeholders['ETCD_URL']}}
+                           #'cacert': placeholders['ETCD_CACERT'], 
+                           #'cert': placeholders['ETCD_CERT'], 
+                           #'key': placeholders['ETCD_KEY']}}
     elif 'ETCD_DISCOVERY_DOMAIN' in placeholders:
         config = {'etcd': {'discovery_srv': placeholders['ETCD_DISCOVERY_DOMAIN']}}
     else:
