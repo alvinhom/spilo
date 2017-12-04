@@ -145,8 +145,10 @@ bootstrap:
   - locale: en_US.UTF-8
   - data-checksums
   pg_hba:
+    - local   all all  md5
     - hostssl all all 0.0.0.0/0 md5
     - host    all all 0.0.0.0/0 md5
+    - host    all all ::1/128 ident
 scope: &scope '{{SCOPE}}'
 restapi:
   listen: 0.0.0.0:{{APIPORT}}
@@ -342,8 +344,8 @@ def get_dcs_config(config, placeholders):
     elif 'ETCD_HOST' in placeholders:
         config = {'etcd': {'host': placeholders['ETCD_HOST']}}
     elif 'ETCD_URL' in placeholders:
-        config = {'etcd': {'url': placeholders['ETCD_URL']}}
-                           #'cacert': placeholders['ETCD_CACERT'], 
+        config = {'etcd': {'url': placeholders['ETCD_URL'],
+                           'cacert': placeholders['ETCD_CACERT']}}
                            #'cert': placeholders['ETCD_CERT'], 
                            #'key': placeholders['ETCD_KEY']}}
     elif 'ETCD_DISCOVERY_DOMAIN' in placeholders:
