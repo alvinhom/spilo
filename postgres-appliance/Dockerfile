@@ -20,7 +20,7 @@ RUN export DEBIAN_FRONTEND=noninteractive \
 # Install PostgreSQL
 ENV PGVERSION=9.6 PGOLDVERSIONS="9.3 9.4 9.5"
 RUN export DEBIAN_FRONTEND=noninteractive \
-    && export BUILD_PACKAGES="devscripts build-essential pgxnclient libedit-dev zlib1g-dev libssl-dev libselinux1-dev libkrb5-dev libxslt1-dev libxml2-dev libpam0g-dev libcurl4-openssl-dev libprotobuf-c-dev liblwgeom-dev pkg-config libproj-dev libevent-dev" \
+    && export BUILD_PACKAGES="devscripts build-essential pgxnclient libedit-dev zlib1g-dev libssl-dev libselinux1-dev libkrb5-dev libxslt1-dev libxml2-dev libpam0g-dev libcurl4-openssl-dev libprotobuf-c-dev liblwgeom-dev pkg-config libproj-dev libevent-dev dh-autoreconf python-docutils" \
 
     # Add PGDG repositories
     && export DISTRIB_CODENAME=$(sed -n 's/DISTRIB_CODENAME=//p' /etc/lsb-release) \
@@ -136,11 +136,11 @@ RUN export DEBIAN_FRONTEND=noninteractive \
 
     && pip3 install setuptools pip --upgrade \
     && pip3 install --upgrade patroni==$PATRONIVERSION \
-            gcloud boto \ 
+            certifi gcloud boto \ 
 
     # wal-e workaround to get latest source code to support backup to file
     && apt-get install -y git \
-    && git clone https://github.com/wal-e/wal-e.git /home/wale \
+    && git clone https://github.com/alvinhom/wal-e.git /home/wale \
     && python3 -m pip install /home/wale \
 
     # https://github.com/wal-e/wal-e/issues/318

@@ -293,7 +293,7 @@ def get_placeholders(provider):
     elif provider == PROVIDER_GOOGLE and 'WAL_GCS_BUCKET' in placeholders:
         placeholders['USE_WALE'] = True
         placeholders.setdefault('GOOGLE_APPLICATION_CREDENTIALS', '')
-    elif provider == PROVIDER_LOCAL and 'WAL_FILE_BACKUP_DIR' in placeholders:
+    elif provider == PROVIDER_LOCAL and 'WAL_S3_BUCKET' in placeholders:
         placeholders['USE_WALE'] = True
 
     # Kubernetes requires a callback to change the labels in order to point to the new master
@@ -303,7 +303,7 @@ def get_placeholders(provider):
     placeholders.setdefault('postgresql', {})
     placeholders['postgresql'].setdefault('parameters', {})
     placeholders['postgresql']['parameters']['archive_command'] = \
-        'envdir "{0}" wal-e --aws-instance-profile wal-push "%p"'.format(placeholders['WALE_ENV_DIR']) \
+        'envdir "{0}" wal-e wal-push "%p"'.format(placeholders['WALE_ENV_DIR']) \
         if placeholders['USE_WALE'] else '/bin/true'
 
     if os.path.exists(MEMORY_LIMIT_IN_BYTES_PATH):
@@ -380,8 +380,20 @@ def write_wale_command_environment(placeholders, overwrite, provider):
             write_file('{GOOGLE_APPLICATION_CREDENTIALS}'.format(**placeholders),
                        os.path.join(placeholders['WALE_ENV_DIR'], 'GOOGLE_APPLICATION_CREDENTIALS'), overwrite)
     else:
-        write_file('file://{WAL_FILE_BACKUP_DIR}/spilo/{SCOPE}/wal/'.format(**placeholders),
-                   os.path.join(placeholders['WALE_ENV_DIR'], 'WALE_FILE_PREFIX'), overwrite)
+        # custom S3 bucket using Ceph
+        write_file('s3://{WAL_S3_BUCKET}/spilo/{SCOPE}/wal/'.format(**placeholders),
+                   os.path.join(placeholders['WALE_ENV_DIR'], 'WALE_S3_PREFIX'), overwrite)
+        write_file('https+path://{WAL_CEPH_HOST}:443'.format(**placeholders),
+                   os.path.join(placeholders['WALE_ENV_DIR'], 'WALE_S3_ENDPOINT'), overwrite)
+        if placeholders['AWS_ACCESS_KEY_ID']:
+            write_file('{AWS_ACCESS_KEY_ID}'.format(**placeholders),
+                       os.path.join(placeholders['WALE_ENV_DIR'], 'AWS_ACCESS_KEY_ID'), overwrite)
+        if placeholders['AWS_SECRET_ACCESS_KEY']:
+            write_file('{AWS_SECRET_ACCESS_KEY}'.format(**placeholders),
+                       os.path.join(placeholders['WALE_ENV_DIR'], 'AWS_SECRET_ACCESS_KEY'), overwrite)
+        if placeholders['AWS_REGION']:
+            write_file('{AWS_REGION}'.format(**placeholders),
+                       os.path.join(placeholders['WALE_ENV_DIR'], 'AWS_REGION'), overwrite)
 
     if not os.path.exists(placeholders['WALE_TMPDIR']):
         os.makedirs(placeholders['WALE_TMPDIR'])
