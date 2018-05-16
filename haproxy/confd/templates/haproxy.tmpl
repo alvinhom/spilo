@@ -1,5 +1,5 @@
 global
-	maxconn 100
+	maxconn 500
 
 defaults
 	log	global
@@ -12,10 +12,12 @@ defaults
 
 frontend master_postgresql
 	bind *:5000
+        option clitcpka
 	default_backend backend_master
 
 frontend replicas_postgresql
 	bind *:5001
+        option clitcpka
 	default_backend backend_replicas
 
 backend backend_master

@@ -200,7 +200,6 @@ postgresql:
     envdir: {{WALE_ENV_DIR}}
     threshold_megabytes: {{WALE_BACKUP_THRESHOLD_MEGABYTES}}
     threshold_backup_size_percentage: {{WALE_BACKUP_THRESHOLD_PERCENTAGE}}
-    use_iam: 1
     retries: 2
     no_master: 1
   basebackup_fast_xlog:
@@ -394,6 +393,9 @@ def write_wale_command_environment(placeholders, overwrite, provider):
         if placeholders['AWS_REGION']:
             write_file('{AWS_REGION}'.format(**placeholders),
                        os.path.join(placeholders['WALE_ENV_DIR'], 'AWS_REGION'), overwrite)
+        if placeholders['PGPASSWORD']:
+            write_file('{PGPASSWORD}'.format(**placeholders),
+                       os.path.join(placeholders['WALE_ENV_DIR'], 'PGPASSWORD'), overwrite)
 
     if not os.path.exists(placeholders['WALE_TMPDIR']):
         os.makedirs(placeholders['WALE_TMPDIR'])
