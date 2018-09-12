@@ -23,7 +23,7 @@ do
    do
       h1=${array[i]}
       echo $h1
-      if curl -s --cacert ${ETCD_CACERT} "$h1"/v2/members | jq -r '.members[0].clientURLs[0]' | grep -q http; then
+      if curl -s --cacert ${ETCD_CACERT} --cert ${ETCD_CERT}  --key ${ETCD_KEY} "$h1"/v2/members | jq -r '.members[0].clientURLs[0]' | grep -q http; then
          echo "found etcd member ${array[i]}"
          break 2
       else
