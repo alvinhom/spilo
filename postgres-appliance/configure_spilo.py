@@ -18,6 +18,7 @@ import requests
 
 PROVIDER_AWS = "aws"
 PROVIDER_GOOGLE = "google"
+PROVIDER_AZURE = "azure"
 PROVIDER_LOCAL = "local"
 PROVIDER_UNSUPPORTED = "unsupported"
 USE_KUBERNETES = os.environ.get('KUBERNETES_SERVICE_HOST') is not None
@@ -123,6 +124,7 @@ bootstrap:
         max_wal_senders: 5
         max_connections: {{postgresql.parameters.max_connections}}
         max_replication_slots: 5
+        max_locks_per_transaction: 512
         hot_standby: 'on'
         tcp_keepalives_idle: 900
         tcp_keepalives_interval: 100
@@ -148,7 +150,7 @@ bootstrap:
     - local   all all  md5
     - hostssl all all 0.0.0.0/0 md5
     - host    all all 0.0.0.0/0 md5
-    - host    all all ::1/128 ident
+    - host    all all ::1/128 md5
 scope: &scope '{{SCOPE}}'
 restapi:
   listen: 0.0.0.0:{{APIPORT}}
@@ -220,13 +222,27 @@ def get_provider():
             if r.ok:
                 return PROVIDER_AWS
             else:
-                return PROVIDER_UNSUPPORTED
+                headers = {'Metadata': 'true'}
+                r = requests.get('http://169.254.169.254/metadata/instance?api-version=2017-08-01', headers=headers)  # should be only accessible on Azure
+                if r.ok:
+                   return PROVIDER_AZURE
+                else:
+                   return PROVIDER_UNSUPPORTED
     except (requests.exceptions.ConnectTimeout, requests.exceptions.ConnectionError):
         logging.info("Could not connect to 169.254.169.254, assuming local Docker setup")
         return PROVIDER_LOCAL
 
 
 def get_instance_metadata(provider):
+    if provider == PROVIDER_AZURE:
+         hn = socket.gethostname()
+         headers= {'Metadata' : 'true'}
+         r = requests.get('http://169.254.169.254/metadata/instance/network/interface/0/ipv4/ipAddress/0/privateIpAddress?api-version=2017-08-01&format=text', headers=headers)
+         ip = r.text
+         metadata = {'ip': ip, 'id': hn, 'zone': 'local'}
+         logging.info('azure metadata is {}'.format(metadata))
+         return metadata
+
     metadata = {'ip': socket.gethostbyname(socket.gethostname()),
                 'id': socket.gethostname(),
                 'zone': 'local'}
@@ -292,6 +308,8 @@ def get_placeholders(provider):
     elif provider == PROVIDER_GOOGLE and 'WAL_GCS_BUCKET' in placeholders:
         placeholders['USE_WALE'] = True
         placeholders.setdefault('GOOGLE_APPLICATION_CREDENTIALS', '')
+    elif provider == PROVIDER_AZURE and 'WAL_WABS_BUCKET' in placeholders:
+        placeholders['USE_WALE'] = True
     elif provider == PROVIDER_LOCAL and 'WAL_S3_BUCKET' in placeholders:
         placeholders['USE_WALE'] = True
 
@@ -344,7 +362,7 @@ def get_dcs_config(config, placeholders):
         config = {'etcd': {'host': placeholders['ETCD_HOST']}}
     elif 'ETCD_URL' in placeholders:
         config = {'etcd': {'url': placeholders['ETCD_URL'],
-                           'cacert': placeholders['ETCD_CACERT']}}
+                           'cacert': placeholders['ETCD_CACERT'],
                            'cert': placeholders['ETCD_CERT'], 
                            'key': placeholders['ETCD_KEY']}}
     elif 'ETCD_DISCOVERY_DOMAIN' in placeholders:
@@ -378,6 +396,15 @@ def write_wale_command_environment(placeholders, overwrite, provider):
         if placeholders['GOOGLE_APPLICATION_CREDENTIALS']:
             write_file('{GOOGLE_APPLICATION_CREDENTIALS}'.format(**placeholders),
                        os.path.join(placeholders['WALE_ENV_DIR'], 'GOOGLE_APPLICATION_CREDENTIALS'), overwrite)
+    elif provider == PROVIDER_AZURE:
+        write_file('wabs://{WAL_WABS_BUCKET}/spilo/{SCOPE}/wal/'.format(**placeholders),
+                   os.path.join(placeholders['WALE_ENV_DIR'], 'WALE_WABS_PREFIX'), overwrite)
+        if placeholders['WABS_ACCOUNT_NAME']:
+           write_file('{WABS_ACCOUNT_NAME}'.format(**placeholders),
+                       os.path.join(placeholders['WALE_ENV_DIR'], 'WABS_ACCOUNT_NAME'), overwrite)
+        if placeholders['WABS_ACCESS_KEY']:
+            write_file('{WABS_ACCESS_KEY}'.format(**placeholders),
+                       os.path.join(placeholders['WALE_ENV_DIR'], 'WABS_ACCESS_KEY'), overwrite)
     else:
         # custom S3 bucket using Ceph
         write_file('s3://{WAL_S3_BUCKET}/spilo/{SCOPE}/wal/'.format(**placeholders),

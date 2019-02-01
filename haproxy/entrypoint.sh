@@ -4,6 +4,7 @@ DOCKER_IP=$(hostname --ip-address)
 
 haproxy -f /etc/haproxy/haproxy.cfg -p /var/run/haproxy.pid -D
 CONFD="confd -prefix=/service/$SCOPE -interval=10 -backend"
+CERTS="-client-ca-keys ${ETCD_CACERT} -client-cert ${ETCD_CERT} -client-key ${ETCD_KEY}"
 
 # parse the ETCD_HOSTS var and split into confd options -node host
 array=($(echo "$ETCD_HOSTS" | tr ',' '\n'))
@@ -35,4 +36,5 @@ done
 #while ! curl -s --cacert ${ETCD_CACERT} ${ETCD_HOST}/v2/members | jq -r '.members[0].clientURLs[0]' | grep -q http; do
 #    sleep 1
 #done
-exec $CONFD etcd $opts
+echo exec $CONFD etcd $opts $CERTS
+exec $CONFD etcd $opts $CERTS

@@ -94,13 +94,14 @@ RUN export DEBIAN_FRONTEND=noninteractive \
     && apt-get install -y skytools3-ticker \
 
     # patch, build and install pgbouncer
-    && mkdir pgbouncer && cd pgbouncer \
-    && apt-get source pgbouncer \
-    && cd $(ls -d pgbouncer-*) \
-    && curl -sL https://github.com/pgbouncer/pgbouncer/pull/127.diff | patch -p1 \
-    && debuild -b -uc -us \
-    && dpkg -i ../pgbouncer_*.deb \
-    && cd ../.. \
+    && apt-get install pgbouncer \
+    #&& mkdir pgbouncer && cd pgbouncer \
+    #&& apt-get source pgbouncer \
+    #&& cd $(ls -d pgbouncer-*) \
+    #&& curl -sL https://github.com/pgbouncer/pgbouncer/pull/127.diff | patch -p1 \
+    #&& debuild -b -uc -us \
+    #&& dpkg -i ../pgbouncer_*.deb \
+    #&& cd ../.. \
 
     # install pam_oauth2.so
     && export PAM_OAUTH_COMMIT=bed1f8d31840d1fda49365921449112a7421b8ca \
@@ -123,20 +124,19 @@ ENV PATH=$PATH:/usr/lib/postgresql/${PGVERSION}/bin
 
 # Install patroni and WAL-e
 ENV PATRONIVERSION=1.3.4
-ENV WALE_VERSION=1.0.3
 RUN export DEBIAN_FRONTEND=noninteractive \
-    export BUILD_PACKAGES="python3-pip python3-dev gcc" \
+    export BUILD_PACKAGES="python3-pip python3-wheel python3-dev gcc" \
     && apt-get update \
     && apt-get install -y \
             # Required for wal-e
             daemontools lzop \
             # Required for /usr/local/bin/patroni
-            python3 python3-pystache python3-prettytable python3-six \
+            python3 python3-pystache python3-prettytable python3-six libssl-dev libffi-dev \
             ${BUILD_PACKAGES} \
 
-    && pip3 install setuptools pip --upgrade \
+    && pip3 install setuptools --upgrade \
     && pip3 install --upgrade patroni==$PATRONIVERSION \
-            certifi gcloud boto \ 
+            certifi gcloud boto azure\ 
 
     # wal-e workaround to get latest source code to support backup to file
     && apt-get install -y git \
