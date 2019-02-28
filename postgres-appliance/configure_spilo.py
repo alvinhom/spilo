@@ -258,7 +258,7 @@ def get_instance_metadata(provider):
         if not USE_KUBERNETES:
             mapping.update({'id': 'id'})
     elif provider == PROVIDER_AWS:
-        url = 'http://instance-data/latest/meta-data'
+        url = 'http://169.254.169.254/latest/meta-data'
         mapping = {'zone': 'placement/availability-zone'}
         if not USE_KUBERNETES:
             mapping.update({'ip': 'local-ipv4', 'id': 'instance-id'})
@@ -390,6 +390,12 @@ def write_wale_command_environment(placeholders, overwrite, provider):
             region = placeholders['instance_data']['zone'][:-1]
         write_file('https+path://s3-{}.amazonaws.com:443'.format(region),
                    os.path.join(placeholders['WALE_ENV_DIR'], 'WALE_S3_ENDPOINT'), overwrite)
+        if placeholders['AWS_ACCESS_KEY_ID']:
+            write_file('{AWS_ACCESS_KEY_ID}'.format(**placeholders),
+                       os.path.join(placeholders['WALE_ENV_DIR'], 'AWS_ACCESS_KEY_ID'), overwrite)
+        if placeholders['AWS_SECRET_ACCESS_KEY']:
+            write_file('{AWS_SECRET_ACCESS_KEY}'.format(**placeholders),
+                       os.path.join(placeholders['WALE_ENV_DIR'], 'AWS_SECRET_ACCESS_KEY'), overwrite)
     elif provider == PROVIDER_GOOGLE:
         write_file('gs://{WAL_GCS_BUCKET}/spilo/{SCOPE}/wal/'.format(**placeholders),
                    os.path.join(placeholders['WALE_ENV_DIR'], 'WALE_GS_PREFIX'), overwrite)
